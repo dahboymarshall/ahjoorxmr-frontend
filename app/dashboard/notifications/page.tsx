@@ -13,6 +13,8 @@ import {
   UserPlus,
   UserMinus,
   Megaphone,
+  Repeat,
+  Send,
 } from "lucide-react";
 import type { Notification, NotificationType, NotificationCategory } from "@/types/notification";
 import { NOTIFICATION_CATEGORIES } from "@/types/notification";
@@ -122,6 +124,8 @@ const TYPE_CONFIG: Record<
   join_request: { icon: UserPlus, color: "text-[#4B6B76]" },
   member_left: { icon: UserMinus, color: "text-[#FF5B5B]" },
   announcement: { icon: Megaphone, color: "text-[#4B6B76]" },
+  seat_transfer: { icon: Repeat, color: "text-[#4B6B76]" },
+  circle_invite: { icon: Send, color: "text-[#4B6B76]" },
 };
 
 function relativeTime(date: Date): string {

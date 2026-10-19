@@ -9,12 +9,14 @@ import { OPEN_COMMAND_PALETTE_EVENT } from "@/components/ui/CommandPalette";
 import ThemeToggle from "@/components/ui/ThemeToggle";
 import InstallPWAButton from "@/components/ui/InstallPWAButton";
 import PendingTransactionsTracker from "@/components/layout/Navbar/PendingTransactionsTracker";
+import { hasUnseenChangelog as checkUnseenChangelog } from "@/data/changelog";
 
 const navLinks = [
   { label: "Home", href: "#" },
   { label: "How it Works", href: "#how" },
   { label: "Features", href: "#why" },
   { label: "FAQs", href: "#faq" },
+  { label: "What's New", href: "/changelog" },
 ];
 
 function WalletSelectModal({
@@ -68,7 +70,8 @@ function WalletSelectModal({
         </div>
 
         <p className="text-[var(--muted)] text-sm mb-5">
-          Choose a Starknet-compatible wallet to connect.
+          Choose a <GlossaryTerm term="starknet">Starknet</GlossaryTerm>-compatible{" "}
+          <GlossaryTerm term="wallet">wallet</GlossaryTerm> to connect.
         </p>
 
         <div className="space-y-3">
@@ -111,6 +114,9 @@ function WalletSelectModal({
           {passkeyBusy ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <KeyRound size={16} aria-hidden="true" />}
           {passkeyBusy ? "Waiting for passkey..." : "Sign in with passkey"}
         </button>
+        <p className="mt-2 flex items-center justify-center gap-1 text-[11px] text-[var(--muted)]">
+          New to passkeys? <GlossaryTerm term="passkey" iconOnly />
+        </p>
         {passkeyError && <p role="alert" className="mt-2 text-xs leading-relaxed text-red-500">{passkeyError}</p>}
         {!passkeySupported && (
           <p className="mt-2 text-center text-[11px] text-[var(--muted)]">
@@ -180,6 +186,12 @@ export default function Navbar() {
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [hasUnseenChangelog, setHasUnseenChangelog] = useState(false);
+
+  useEffect(() => {
+    const sync = () => setHasUnseenChangelog(checkUnseenChangelog());
+    sync();
+  }, []);
 
   const { address, isConnected, connect, signInWithPasskey, disconnect } = useWallet();
 
@@ -251,6 +263,9 @@ export default function Navbar() {
                   className="text-[14px] font-medium text-[var(--muted)] no-underline transition-colors duration-200 hover:text-[var(--text)] relative group"
                 >
                   {l.label}
+                  {l.href === "/changelog" && hasUnseenChangelog && (
+                    <span className="absolute -top-1 -right-2.5 w-2 h-2 rounded-full bg-[#8b7cf8]" aria-label="New updates" />
+                  )}
                   <span className="absolute -bottom-[3px] left-0 w-0 h-px bg-[#8b7cf8] transition-all duration-200 group-hover:w-full" aria-hidden="true" />
                 </Link>
               </li>
