@@ -9,6 +9,9 @@ import {
   XCircle,
   Activity,
   Megaphone,
+  Link2,
+  PauseCircle,
+  PlayCircle,
 } from "lucide-react";
 import type { CircleEvent, EventType } from "@/types/circle";
 
@@ -72,6 +75,21 @@ const EVENT_CONFIG: Record<
     icon: <Megaphone size={16} />,
     color: "text-[#4B6B76] bg-[#4B6B7615]",
   },
+  invite_used: {
+    label: "Invite link used",
+    icon: <Link2 size={16} />,
+    color: "text-[#8b7cf8] bg-[#8b7cf815]",
+  },
+  circle_paused: {
+    label: "paused the circle",
+    icon: <PauseCircle size={16} />,
+    color: "text-[#FBBF24] bg-[#FBBF2415]",
+  },
+  circle_resumed: {
+    label: "resumed the circle",
+    icon: <PlayCircle size={16} />,
+    color: "text-[var(--success)] bg-[#4ADE8015]",
+  },
 };
 
 export default function ActivityFeed({ events, pageSize = 10 }: Props) {
@@ -103,7 +121,7 @@ export default function ActivityFeed({ events, pageSize = 10 }: Props) {
         {visible.map((event) => {
           const config = EVENT_CONFIG[event.type];
           const isSystemEvent =
-            event.type === "round_started" || event.type === "circle_closed";
+            event.type === "round_started" || event.type === "circle_closed" || event.type === "invite_used";
 
           return (
             <li key={event.id} className="mb-6 ml-6">
