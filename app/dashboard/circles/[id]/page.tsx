@@ -2,12 +2,14 @@
 
 import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Check, X as XIcon, Link as LinkIcon, Settings, BarChart3, LogOut } from "lucide-react";
+import { ArrowLeft, Check, X as XIcon, Settings, BarChart3, LogOut } from "lucide-react";
 import Link from "next/link";
 import LeaveCircleModal from "@/components/modals/LeaveCircleModal";
 import { addNotification } from "@/lib/notifications";
 import { ANNOUNCEMENTS_EVENT, getAnnouncementsForCircle } from "@/lib/announcements";
 import ActivityFeed from "@/components/circles/ActivityFeed";
+import InviteManager from "@/components/circles/InviteManager";
+import { getInviteUsage, INVITES_UPDATED_EVENT } from "@/lib/inviteLinks";
 import CountdownTimer from "@/components/ui/CountdownTimer";
 import DisputeList from "@/components/circles/DisputeList";
 import DiscussionThread from "@/components/circles/DiscussionThread";
@@ -31,8 +33,12 @@ import { enableAutoPay, getAutoPayConfig, recordAutoPayAttempt } from "@/lib/aut
 import CircleRulesView from "@/components/circles/CircleRulesView";
 import { CIRCLE_RULES_UPDATED_EVENT, getCircleRules, type CircleRulesRecord } from "@/lib/circleRules";
 import CircleImage from "@/components/circles/CircleImage";
-import { JOIN_REQUESTS_UPDATED_EVENT } from "@/lib/joinRequests"; // (not actually used here, safe to omit if unused)
+import { DownloadAgreementButton } from "@/components/circles/DownloadAgreementButton";
+import type { ModerationEvent } from "@/types/discussion";
 import WaitlistPositionCard from "@/components/circles/WaitlistPositionCard";
+import PayoutMethodSelector from "@/components/circles/PayoutMethodSelector";
+import PayoutMethodBadge from "@/components/circles/PayoutMethodBadge";
+import { getCircleCurrency, isPayoutInProgress } from "@/lib/payoutMethods";
 
 const CURRENT_WALLET = "0x23g43gdaa8f2c5b1e9d0f7a34bc6e12d8a9f5c3b";
 
@@ -275,46 +281,6 @@ function fmt(address: string) {
   return `${address.slice(0, 8)}…${address.slice(-6)}`;
 }
 
-function InviteLinkButton({ circleId }: { circleId: string }) {
-  const [copied, setCopied] = useState(false);
-
-  async function copy() {
-    const url = `${window.location.origin}/dashboard/circles?invite=${circleId}`;
-    try {
-      await navigator.clipboard.writeText(url);
-    } catch {
-      const el = document.createElement("textarea");
-      el.value = url;
-      el.style.cssText = "position:fixed;opacity:0";
-      document.body.appendChild(el);
-      el.select();
-      document.execCommand("copy");
-      document.body.removeChild(el);
-    }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  }
-
-  return (
-    <button
-      onClick={copy}
-      className="flex items-center gap-2 px-4 py-2 bg-[var(--ov-0a)] hover:bg-[var(--ov-14)] text-sm text-[var(--text)] font-medium rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4B6B76]"
-    >
-      {copied ? (
-        <>
-          <Check size={14} className="text-green-600 dark:text-green-400" aria-hidden="true" />
-          <span className="text-green-600 dark:text-green-400">Copied!</span>
-        </>
-      ) : (
-        <>
-          <LinkIcon size={14} aria-hidden="true" />
-          Copy Invite Link
-        </>
-      )}
-    </button>
-  );
-}
-
 function ParticipantRow({ participant }: { participant: Participant }) {
   const isCurrentUser = participant.address === CURRENT_WALLET;
   return (
@@ -409,11 +375,49 @@ export default function CircleDetailPage({
   );
   const [payoutDraw, setPayoutDraw] = useState<PayoutDraw | null>(null);
   const [announcementEvents, setAnnouncementEvents] = useState<CircleEvent[]>([]);
+  const [inviteEvents, setInviteEvents] = useState<CircleEvent[]>([]);
+  const pauseState = useCirclePause(id);
+  const pauseEvents: CircleEvent[] = pauseState.log.map((entry) => ({
+    id: entry.id,
+    type: entry.type === "paused" ? "circle_paused" : "circle_resumed",
+    actor: entry.actor,
+    timestamp: new Date(entry.at),
+    meta: entry.reason ? { message: entry.reason } : undefined,
+  }));
+
+  useEffect(() => {
+    const sync = () =>
+      setInviteEvents(
+        getInviteUsage(id).map((u) => ({
+          id: u.id,
+          type: "invite_used",
+          actor: "Invite link",
+          timestamp: new Date(u.usedAt),
+        }))
+      );
+    sync();
+    window.addEventListener(INVITES_UPDATED_EVENT, sync);
+    return () => window.removeEventListener(INVITES_UPDATED_EVENT, sync);
+  }, [id]);
   const [circleRules, setCircleRules] = useState<CircleRulesRecord | null>(null);
 
   useEffect(() => {
     setPayoutDraw(getPayoutDraw(id));
   }, [id]);
+
+  // Celebrate milestones this circle has reached (each plays once per user).
+  useEffect(() => {
+    if (!circle || !circle.isMember) return;
+    detectCircleMilestones({
+      id: circle.id,
+      name: circle.name,
+      status: circle.status,
+      memberCount: circle.participants.length,
+      totalSlots: circle.totalSlots,
+      lastCompletedRound: circle.roundHistory.reduce((max, row) => Math.max(max, row.round), 0),
+      totalRounds: circle.totalRounds,
+    }).forEach(celebrateMilestone);
+  }, [circle]);
 
   useEffect(() => {
     const syncRules = () => setCircleRules(getCircleRules(id));
@@ -516,6 +520,17 @@ export default function CircleDetailPage({
     [id]
   );
 
+  const handleModerationAction = useCallback((action: ModerationEvent) => {
+    const event: CircleEvent = {
+      id: `mod-${Date.now()}`,
+      type: "announcement_sent",
+      actor: action.actorAddress,
+      timestamp: new Date(),
+      meta: { moderation: action },
+    };
+    setAnnouncementEvents((prev) => [event, ...prev]);
+  }, []);
+
   const handleLeaveCircle = useCallback(async () => {
     if (!circle) return;
     await new Promise((resolve) => setTimeout(resolve, 500));
@@ -526,6 +541,7 @@ export default function CircleDetailPage({
       description: `${fmt(CURRENT_WALLET)} left ${circle.name}.`,
       href: `/dashboard/circles/${circle.id}`,
     });
+    recordLeftCircle(circle.id);
     setLeaveOpen(false);
     showToast({ title: `You left ${circle.name}`, variant: "success" });
     router.push("/dashboard/circles");
@@ -571,6 +587,8 @@ export default function CircleDetailPage({
   const currentUserPaid = currentUserParticipant?.paid ?? false;
   const isNextRecipient = circle.nextPayoutRecipient === CURRENT_WALLET;
   const canManageCircle = circle.isOrganizer || circle.isCoOrganizer;
+  const circleCurrency = getCircleCurrency(circle.contribution);
+  const payoutInProgress = isPayoutInProgress(isNextRecipient, circle.nextPayoutDeadline);
 
   // Leave-circle eligibility — non-organizer participants only, and never on
   // a circle that's already finished.
@@ -610,6 +628,7 @@ export default function CircleDetailPage({
   return (
     <div className="space-y-10 pb-20 md:pb-0">
       <CircleImage circleId={circle.id} circleName={circle.name} kind="cover" alt={`${circle.name} cover`} className="aspect-[16/5] w-full rounded-2xl object-cover" />
+      <CirclePausedBanner circleId={circle.id} />
       {/* Back + Title */}
       <div className="flex flex-wrap items-center gap-3">
         <Link
@@ -622,13 +641,19 @@ export default function CircleDetailPage({
         <h1 className="text-2xl font-bold font-sora text-[var(--text)]">{circle.name}</h1>
         <BookmarkButton circleId={circle.id} circleName={circle.name} size={18} />
         <CircleHealthIndicator health={getMockCircleHealth(circle.id)} />
-        <span className={`text-xs font-medium px-2.5 py-1 rounded-full capitalize ${STATUS_STYLES[circle.status]}`}>
-          {circle.status}
-        </span>
+        {pauseState.paused ? (
+          <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400">
+            Paused
+          </span>
+        ) : (
+          <span className={`text-xs font-medium px-2.5 py-1 rounded-full capitalize ${STATUS_STYLES[circle.status]}`}>
+            {circle.status}
+          </span>
+        )}
         <div className="h-px bg-[var(--ov-1a)] flex-1 hidden sm:block" aria-hidden="true" />
         {canManageCircle && (
           <>
-            <InviteLinkButton circleId={circle.id} />
+            <InviteManager circleId={circle.id} />
             {circle.isOrganizer && (
               <Link
                 href={`/dashboard/circles/${circle.id}/analytics`}
@@ -745,7 +770,14 @@ export default function CircleDetailPage({
         {circle.status !== "completed" && <div className="bg-[var(--content)] p-6 rounded-2xl space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-bold font-sora text-[var(--text)]">Upcoming Payout</h2>
-            <CountdownTimer deadline={circle.nextPayoutDeadline} />
+            <CountdownTimer
+              paused={pauseState.paused}
+              deadline={
+                circle.nextPayoutDeadline
+                  ? new Date(circle.nextPayoutDeadline.getTime() + pauseState.totalPausedMs)
+                  : null
+              }
+            />
           </div>
           <div className="flex items-center justify-between">
             <div>
@@ -762,7 +794,32 @@ export default function CircleDetailPage({
               </p>
             </div>
           </div>
+          {circle.isMember && (
+            <div className="flex items-center justify-between border-t border-[var(--ov-0f)] pt-4">
+              <PayoutMethodBadge
+                circleId={circle.id}
+                currency={circleCurrency}
+                label={isNextRecipient ? "Paid to" : "Your payout method"}
+              />
+              {payoutInProgress && (
+                <span className="flex items-center gap-1 text-xs text-amber-400">
+                  <Lock size={12} aria-hidden="true" />
+                  Payout in progress
+                </span>
+              )}
+            </div>
+          )}
         </div>}
+
+        {/* Payout method preference */}
+        {circle.isMember && circle.status !== "completed" && (
+          <PayoutMethodSelector
+            circleId={circle.id}
+            circleName={circle.name}
+            currency={circleCurrency}
+            payoutInProgress={payoutInProgress}
+          />
+        )}
 
         {/* Auto-Pay */}
         {circle.isMember && circle.status !== "completed" && (
@@ -902,7 +959,7 @@ export default function CircleDetailPage({
             <h2 className="text-lg font-bold font-sora text-[var(--text)] shrink-0">Activity</h2>
             <div className="ml-4 h-px bg-[var(--ov-1a)] w-full" aria-hidden="true" />
           </div>
-          <ActivityFeed events={[...MOCK_EVENTS, ...announcementEvents]} pageSize={5} />
+          <ActivityFeed events={[...MOCK_EVENTS, ...announcementEvents, ...inviteEvents, ...pauseEvents]} pageSize={5} />
         </div>
 
         <ExportButton
@@ -911,6 +968,35 @@ export default function CircleDetailPage({
           prefix="circle"
           title={`${circle.name} — Transaction History`}
         />
+
+        {/* Download Agreement Button - available to all members */}
+        {circle.isMember && (
+          <div className="pt-4 border-t border-[var(--ov-0f)]">
+            <DownloadAgreementButton
+              data={{
+                circle: {
+                  id: circle.id,
+                  name: circle.name,
+                  contribution: circle.contribution,
+                  duration: circle.duration,
+                  totalRounds: circle.totalRounds,
+                  currentRound: circle.currentRound,
+                  status: circle.status,
+                },
+                rules: circleRules ? circleRules.rules : [],
+                participants: circle.participants.map((p) => ({
+                  address: p.address,
+                  displayName: p.role,
+                })),
+                schedule: circle.roundHistory.map((r) => ({
+                  round: r.round,
+                  date: r.completedAt,
+                  payout: r.amount,
+                })),
+              }}
+            />
+          </div>
+        )}
       </div>
 
       {/* ── Discussion tab ── */}
@@ -921,11 +1007,26 @@ export default function CircleDetailPage({
         hidden={activeTab !== "discussion"}
         className={activeTab === "discussion" ? "space-y-6" : ""}
       >
-        <DiscussionThread comments={comments} currentAddress={CURRENT_WALLET} />
-        <CommentComposer
-          onSubmit={handlePostComment}
-          disabled={!circle.isMember}
-        />
+        {circle.isMember && (
+          <>
+            <DiscussionThread
+              comments={comments}
+              currentAddress={CURRENT_WALLET}
+              circleId={id}
+              organizerAddress={circle.creator}
+              onModerationAction={handleModerationAction}
+            />
+            <CommentComposer
+              onSubmit={handlePostComment}
+              disabled={!circle.isMember}
+            />
+          </>
+        )}
+        {!circle.isMember && (
+          <div className="text-center py-8 text-[var(--muted)]">
+            Only circle members can participate in discussions.
+          </div>
+        )}
       </div>
 
       <ReportIssueModal
